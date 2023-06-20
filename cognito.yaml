@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Cognito for sample SaaS
+# Metadata: 
+
+# Parameters: 
+
+# Mappings: 
+
+# Conditions: 
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties: 
+      AccountRecoverySetting: 
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      # AliasAttributes: 
+      #   - String
+      AutoVerifiedAttributes: 
+        - email
+      # DeletionProtection: String
+      # DeviceConfiguration: 
+      #   DeviceConfiguration
+      EmailConfiguration: 
+        # ConfigurationSet: String
+        EmailSendingAccount: COGNITO_DEFAULT
+        # From: no-reply@clickio.com
+        # ReplyToEmailAddress: String
+        # SourceArn: String
+
+      # EmailVerificationMessage: String
+      # EmailVerificationSubject: String
+      # EnabledMfas: 
+      #   - String
+      # LambdaConfig: 
+      #   LambdaConfig
+      # MfaConfiguration: OFF
+      Policies: 
+        PasswordPolicy: 
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - AttributeDataType: String
+          # DeveloperOnlyAttribute: Boolean
+          Mutable: false
+          Name: tenant_id
+          # NumberAttributeConstraints: 
+          #   NumberAttributeConstraints
+          Required: false
+          StringAttributeConstraints: 
+            MaxLength: 2048
+            MinLength: 0
+        - AttributeDataType: String
+          # DeveloperOnlyAttribute: Boolean
+          Mutable: true
+          Name: tenant_name
+          # NumberAttributeConstraints: 
+          #   NumberAttributeConstraints
+          Required: false
+          StringAttributeConstraints: 
+            MaxLength: 2048
+            MinLength: 0
+        - AttributeDataType: String
+          # DeveloperOnlyAttribute: Boolean
+          Mutable: true
+          Name: tenant_tier
+          # NumberAttributeConstraints: 
+          #   NumberAttributeConstraints
+          Required: false
+          StringAttributeConstraints: 
+            MaxLength: 2048
+            MinLength: 0
+        - AttributeDataType: String
+          # DeveloperOnlyAttribute: Boolean
+          Mutable: true
+          Name: user_role
+          # NumberAttributeConstraints: 
+          #   NumberAttributeConstraints
+          Required: false
+          StringAttributeConstraints: 
+            MaxLength: 2048
+            MinLength: 0                        
+      # SmsAuthenticationMessage: String
+      # SmsConfiguration: 
+      #   SmsConfiguration
+      # SmsVerificationMessage: String
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate: 
+          - email
+      UsernameAttributes: 
+        - email
+      # UsernameConfiguration: 
+      #   UsernameConfiguration
+      # UserPoolAddOns: 
+      #   UserPoolAddOns
+      UserPoolName: tenant1-userpool
+      UserPoolTags:
+        Name: saas-boost-lab-userpool-1
+        Value: tenant1
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+  UserPoolAppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AccessTokenValidity: 60
+      # AllowedOAuthFlows: 
+      #   - String
+      # AllowedOAuthFlowsUserPoolClient: true
+      # AllowedOAuthScopes: 
+      #   - String
+      # AnalyticsConfiguration: 
+      #   AnalyticsConfiguration
+      AuthSessionValidity: 3
+      # CallbackURLs: 
+      #   - String
+      ClientName: saaas-boost-lab-app-client
+      # DefaultRedirectURI: String
+      # EnablePropagateAdditionalUserContextData: Boolean
+      # EnableTokenRevocation: Boolean
+      ExplicitAuthFlows: 
+        - ALLOW_CUSTOM_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+      GenerateSecret: false
+      IdTokenValidity: 60
+      # LogoutURLs: 
+      #   - String
+      # PreventUserExistenceErrors: String
+      # ReadAttributes: 
+      #   - String
+      RefreshTokenValidity: 30
+      # SupportedIdentityProviders: 
+      #   - String
+      TokenValidityUnits: 
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      UserPoolId: !Ref UserPool
+      # WriteAttributes: 
+      #   - String
+
+Outputs:
+  UserPoolId:
+    Description: Created User Pool Id
+    Value: !Ref UserPool
+  UserPoolAppClientID:
+    Description: Created User Pool App Client Id 
+    Value: !Ref UserPoolAppClient

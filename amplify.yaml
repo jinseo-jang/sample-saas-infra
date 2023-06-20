@@ -1,0 +1,292 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Cognito for sample SaaS
+# Metadata: 
+
+Parameters: 
+  CodeBucket:
+    Description: Sample Source Code Bucket
+    Type: String
+    Default: ee-assets-prod-us-east-1
+  FeCodeKey:
+    Description: Key name of zipped source code in the S3Bucket
+    Type: String
+    Default: modules/55090f1e96784170989036aa131597b0/v1/fe.zip
+
+# Mappings: 
+
+# Conditions: 
+
+Resources:
+  FeCodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        BranchName: main
+        S3:
+          Bucket: !Ref CodeBucket
+          Key: !Ref FeCodeKey
+      RepositoryDescription: Sample SaaS Front End application repository
+      RepositoryName: sample-saas-frontend
+      Tags: 
+        - Key: Name
+          Value: saas-boost-lab-frontend-repository
+      # Triggers: 
+      #   - RepositoryTrigger
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: saas-boost-lab-amplify-role-test
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess-Amplify
+  FeHosting:
+    Type: AWS::Amplify::App
+    # DependsOn: 
+    #   - FeCodeRepo
+    Properties: 
+      # AccessToken: String
+      AutoBranchCreationConfig: 
+        EnableAutoBranchCreation: true
+        # BranchName: mainline
+        EnableAutoBuild: true
+        EnablePerformanceMode: false
+        EnablePullRequestPreview: false
+        Framework: React
+        Stage: PRODUCTION
+      # BasicAuthConfig: 
+      #   BasicAuthConfig
+      # BuildSpec: String
+      # CustomHeaders: String
+      # CustomRules: 
+      #   - CustomRule
+      Description: Sample SaaS Front End Application Hosting
+      IAMServiceRole: !GetAtt AmplifyServiceRole.Arn
+      Name: amplify test
+      # OauthToken: String
+      Platform: WEB
+      Repository: !GetAtt FeCodeRepo.CloneUrlHttp
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: build
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - node_modules/**/*
+      # EnvironmentVariables: 
+      #   - Name: REACT_APP_REGION
+      #     Value: !Ref AWS::Region
+      #   - Name: REACT_APP_USER_POOL_ID
+      #     Value: !Ref UserPool
+      #   - Name: REACT_APP_APP_CLIENT_ID
+      #     Value: !Ref UserPoolAppClient
+      #   - Name: REACT_APP_USERS_BASEURL
+      #     Value: !GetAtt ALB.DNSName
+      #   - Name: REACT_APP_RECORDS_BASEURL
+      #     Value: !GetAtt ALB.DNSName
+      #   - Name: REACT_APP_USERS_API_URL
+      #     Value: /api/users
+      #   - Name: REACT_APP_RECORDS_API_URL
+      #     Value: /api/records      
+      Tags: 
+        - Key: Name
+          Value: saas-boost-lab-frontend-hosting
+  FeHostingBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt FeHosting.AppId
+      BranchName: main
+      EnableAutoBuild: true
+      EnablePerformanceMode: true
+      EnablePullRequestPreview: true
+      Framework: React
+      Stage: PRODUCTION
+
+  # CodeCommitAccessRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: "2012-10-17"
+  #       Statement:
+  #         - Effect: "Allow"
+  #           Principal:
+  #             Service:
+  #               - "lambda.amazonaws.com"
+  #           Action: 
+  #             - "sts:AssumeRole"
+  #     Policies:
+  #       - PolicyName: "AccessCodeCommit"
+  #         PolicyDocument:
+  #           Version: "2012-10-17"
+  #           Statement:
+  #             - Effect: "Allow"
+  #               Action: 
+  #                 - "codecommit:*"
+  #               Resource: "*"
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: saas-boost-lab-cfn-lambda-role
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: saas-boost-lab-cfn-lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ListKeys
+                  - kms:ListAliases
+                  - kms:Describe*
+                Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: '*'
+              - Effect: "Allow"
+                Action: 
+                  - "codecommit:*"
+                Resource: "*"                
+
+  CodeCommitLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/saas-boost-lab-codecommit
+      RetentionInDays: 14
+  
+  CodeCommitDummyCommitFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CodeCommitLambdaLogs
+      - FeCodeRepo
+      - FeHosting
+      - FeHostingBranch
+    Properties:
+      FunctionName: !Sub saas-boost-lab-codecommit
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import base64
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              responseData = {}
+              status = cfnresponse.SUCCESS
+              try:
+                  print("Received event: " + json.dumps(event, default=str))
+                  codecommit = boto3.client('codecommit')
+                  
+                  # Fetch the name of your CodeCommit repository and branch from the environment variables
+                  repository_name = event['ResourceProperties']['RepositoryName']
+                  branch_name = event['ResourceProperties']['BranchName']
+
+                  # Check if this is a Delete event
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      # Delete the branch
+                      # codecommit.delete_branch(
+                      #     repositoryName=repository_name,
+                      #     branchName=branch_name
+                      # )
+                      # print(f"Deleted branch: {branch_name}")
+                  else:    
+                      # Fetch the current commit ID of the branch
+                      response = codecommit.get_branch(
+                          repositoryName=repository_name,
+                          branchName=branch_name
+                      )
+                      commitId = response['branch']['commitId']
+                      print(f"Current commit ID: {commitId}")
+                      
+                      # Create a new file named 'dummy.txt' with the content 'dummy content'
+                      parentCommitId = commitId
+                      fileContent = 'Start Amplify Build and Deploy'
+                      filePath = 'amplify-build-start.txt'
+                      fileMode = 'NORMAL'
+                      
+                      response = codecommit.create_commit(
+                          repositoryName=repository_name,
+                          branchName=branch_name,
+                          parentCommitId=parentCommitId,
+                          putFiles=[
+                              {
+                                  'filePath': filePath,
+                                  'fileContent': fileContent,
+                                  'fileMode': fileMode
+                              },
+                          ]
+                      )
+                      newCommitId = response['commitId']
+                      print(f"New commit ID: {newCommitId}")
+                      
+                      responseData['CommitId'] = newCommitId
+                  cfnresponse.send(event, context, status, responseData, {})
+              except Exception as e:
+                  status = cfnresponse.FAILED
+                  responseData['Error'] = str(e)
+                  cfnresponse.send(event, context, status, responseData, {})
+              finally:
+                  cfnresponse.send(event, context, status, responseData, {})
+
+  CodeCommitCustomResource:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CodeCommitDummyCommitFunction.Arn
+      RepositoryName: !GetAtt FeCodeRepo.Name
+      BranchName: main
+
+Outputs:
+  SampleFeRepositoryID:
+    Description: ID of the created CodeCommit repo
+    Value: !GetAtt FeCodeRepo.CloneUrlHttp

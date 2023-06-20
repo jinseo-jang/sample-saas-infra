@@ -1,0 +1,689 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS SaaS Boost Lab Sample Application Baseline Infrastructure
+Parameters:
+  KeyName: 
+    Description: Amazon EC2 Key Pair Name for a Jump Box with access to the database
+    #Type: AWS::EC2::KeyPair::KeyName
+    Type: String
+  DBName:
+    Description: RDS Database Name
+    Type: String
+    MinLength: 3
+    MaxLength: 31
+    AllowedPattern: ^[a-zA-Z]+[a-zA-Z0-9_\$]*$
+    ConstraintDescription: Database name must be between 3 and 31 characters in length
+  DBMasterUsername:
+    Description: RDS Master Username
+    Type: String
+  DBMasterPassword:
+    Description: RDS Master User Password
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    AllowedPattern: ^[a-zA-Z0-9/@"' ]{8,}$
+    ConstraintDescription: RDS passwords must be at least 8 characters in length
+  # DBAppUsername:
+  #   Description: RDS Application Username
+  #   Type: String
+  # DBAppPassword:
+  #   Description: RDS Application User Password
+  #   Type: String
+  #   NoEcho: true
+  #   MinLength: 8
+  #   AllowedPattern: ^[a-zA-Z0-9/@"' ]{8,}$
+  #   ConstraintDescription: RDS passwords must be at least 8 characters in length
+  RDSInstanceType:
+    Description: RDS Instance Type
+    Type: String
+    Default: db.m5d.xlarge
+  RDSEngineVersion:
+    Description: PostgreSQL version
+    Type: String
+    Default: 14.7
+  AMI:
+    Description: EC2 Image ID for the Jump Box and AppServer (don't change)
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: EC2 Configuration
+        Parameters:
+          - KeyPair
+          - AMI
+      - Label:
+          default: Database Configuration
+        Parameters:
+          - RDSInstanceType
+          - RDSEngineVersion
+          - DBName
+          - DBMasterUsername
+          - DBMasterPassword
+          # - DBAppUsername
+          # - DBAppPassword
+    ParameterLabels:
+      KeyPair:
+        default: Key Pair for the Jump box
+      DBName:
+        default: Database Name
+      DBMasterUsername:
+        default: RDS Master Username
+      DBMasterPassword:
+        default: RDS Master Password
+      # DBAppUsername:
+      #   default: RDS Application Username
+      # DBAppPassword:
+      #   default: RDS Application Password
+      AMI:
+        default: Do Not Change - Jump Box AMI
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyName, '']]
+Resources:
+  KeyPair:
+    Type: 'AWS::EC2::KeyPair'
+    Properties:
+      KeyName:
+        Ref: KeyName
+      Tags:
+        - Key: Name
+          Value: ec2-keypair
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-vpc
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-igw
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-route-pub
+  RoutePublic:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetPublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.32.0/19
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-subA-pub
+  SubnetPublicARouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPublicA
+      RouteTableId: !Ref RouteTablePublic
+  SubnetPublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.96.0/19
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-subB-pub
+  SubnetPublicBRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPublicB
+      RouteTableId: !Ref RouteTablePublic
+  NatGatewayAddrA:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayAddrA.AllocationId
+      SubnetId: !Ref SubnetPublicA
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-nat-subA-pub
+  RouteTableNatA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-route-natA
+  RouteNatA:
+    Type: AWS::EC2::Route
+    DependsOn: NatGatewayA
+    Properties:
+      RouteTableId: !Ref RouteTableNatA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayA
+  SubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.0.0/19
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-subA-priv
+  SubnetPrivateARouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateA
+      RouteTableId: !Ref RouteTableNatA
+  NatGatewayAddrB:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayAddrB.AllocationId
+      SubnetId: !Ref SubnetPublicB
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-nat-subB-pub
+  RouteTableNatB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-route-natB
+  RouteNatB:
+    Type: AWS::EC2::Route
+    DependsOn: NatGatewayB
+    Properties:
+      RouteTableId: !Ref RouteTableNatB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayB
+  SubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.64.0/19
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-subB-priv
+  SubnetPrivateBRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetPrivateB
+      RouteTableId: !Ref RouteTableNatB
+  AppServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub saas-boost-lab-appserver-sg
+      GroupDescription: Deny All
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-appserver-sg
+  JumpBoxSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: saas-boost-lab-jumpbox-sg
+      GroupDescription: Jump Box SSH Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-jumpbox-sg
+  # RDSSecurityGroup:
+  #   Type: AWS::EC2::SecurityGroup
+  #   Properties:
+  #     GroupName: saas-boost-lab-rds-sg
+  #     GroupDescription: RDS Aurora PostgreSQL 5432 Security Group
+  #     VpcId: !Ref VPC
+  #     Tags:
+  #       - Key: Name
+  #         Value: saas-boost-lab-rds-sg
+  # RDSSecurityGroupIngressJumpBox:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref RDSSecurityGroup
+  #     IpProtocol: tcp
+  #     FromPort: 5432
+  #     ToPort: 5432
+  #     SourceSecurityGroupId: !Ref JumpBoxSecurityGroup
+  # RDSSecurityGroupIngressAppServer:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref RDSSecurityGroup
+  #     IpProtocol: tcp
+  #     FromPort: 5432
+  #     ToPort: 5432
+  #     SourceSecurityGroupId: !Ref AppServerSecurityGroup
+  # RDSSubnetGroup:
+  #   Type: AWS::RDS::DBSubnetGroup
+  #   Properties:
+  #     DBSubnetGroupDescription: saas-boost-lab-rds-subnets
+  #     DBSubnetGroupName: saas-boost-lab-rds-subnets
+  #     SubnetIds:
+  #       - !Ref SubnetPrivateA
+  #       - !Ref SubnetPrivateB
+  # RDSInstance:
+  #   Type: AWS::RDS::DBInstance
+  #   DependsOn: RDSSecurityGroup
+  #   DeletionPolicy: Delete
+  #   Properties:
+  #     DBInstanceIdentifier: saas-boost-lab-rds-instance
+  #     DBInstanceClass: !Ref RDSInstanceType
+  #     VPCSecurityGroups:
+  #       - !Ref RDSSecurityGroup
+  #     DBSubnetGroupName: !Ref RDSSubnetGroup
+  #     DeleteAutomatedBackups: true
+  #     MultiAZ: false
+  #     Engine: postgres
+  #     EngineVersion: !Ref RDSEngineVersion
+  #     DBName: !Ref DBName
+  #     MasterUsername: !Ref DBMasterUsername
+  #     MasterUserPassword: !Ref DBMasterPassword
+  #       # Fn::Join:
+  #       #   - ''
+  #       #   - - '{{resolve:ssm-secure:saas-boost-lab-owner-pw:'
+  #       #     - !GetAtt InvokeLambdaSSMPutParamSecure.Version
+  #       #     - '}}'
+  #     AllocatedStorage: 20
+  #     StorageType: gp2
+  # LambdaExecutionRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     RoleName: saas-boost-lab-cfn-lambda-role
+  #     Path: '/'
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #               - lambda.amazonaws.com
+  #           Action:
+  #             - sts:AssumeRole
+  #     Policies:
+  #       - PolicyName: saas-boost-lab-cfn-lambda-policy
+  #         PolicyDocument:
+  #           Version: '2012-10-17'
+  #           Statement:
+  #             - Effect: Allow
+  #               Action:
+  #                 - logs:CreateLogStream
+  #                 - logs:PutLogEvents
+  #               Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+  #             - Effect: Allow
+  #               Action:
+  #                 - logs:DescribeLogStreams
+  #               Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+  #             - Effect: Allow
+  #               Action:
+  #                 - ssm:PutParameter
+  #                 - ssm:GetParameter
+  #                 - ssm:DeleteParameter
+  #               Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:*
+  #             - Effect: Allow
+  #               Action:
+  #                 - kms:Encrypt
+  #                 - kms:Decrypt
+  #                 - kms:ListKeys
+  #                 - kms:ListAliases
+  #                 - kms:Describe*
+  #               Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:*
+  #             - Effect: Allow
+  #               Action:
+  #                 - ec2:CreateNetworkInterface
+  #                 - ec2:DescribeNetworkInterfaces
+  #                 - ec2:DeleteNetworkInterface
+  #               Resource: '*'
+  # LambdaSSMPutParamSecureLogs:
+  #   Type: AWS::Logs::LogGroup
+  #   Properties:
+  #     LogGroupName: !Sub /aws/lambda/saas-boost-lab-ssm-secure
+  #     RetentionInDays: 14
+  # LambdaSSMPutParamSecure:
+  #   Type: AWS::Lambda::Function
+  #   DependsOn: LambdaSSMPutParamSecureLogs
+  #   Properties:
+  #     FunctionName: !Sub saas-boost-lab-ssm-secure
+  #     Role: !GetAtt LambdaExecutionRole.Arn
+  #     Runtime: python3.7
+  #     Timeout: 300
+  #     MemorySize: 256
+  #     Handler: index.lambda_handler
+  #     Code:
+  #       ZipFile: |
+  #         import json
+  #         import boto3
+  #         import cfnresponse
+  #         from botocore.exceptions import ClientError
+          
+  #         def lambda_handler(event, context):
+  #             #print(json.dumps(event, default=str))
+  #             ssm = boto3.client('ssm')
+  #             parameter_name = event['ResourceProperties']['Name']
+  #             parameter_value = event['ResourceProperties']['Value']
+              
+  #             if event['RequestType'] in ['Create', 'Update']:
+  #                 try:
+  #                     put_response = ssm.put_parameter(Name=parameter_name, Value=parameter_value, Type='SecureString', Overwrite=True)
+  #                     cfnresponse.send(event, context, cfnresponse.SUCCESS, {"Version": put_response['Version']})
+  #                 except ClientError as ssm_error:
+  #                     print("ssm error %s" % str(ssm_error))
+  #                     cfnresponse.send(event, context, cfnresponse.FAILED, {"Reason": str(ssm_error)})
+  #                     raise
+  #             elif event['RequestType'] == 'Delete':
+  #                 try:
+  #                     delete_response = ssm.delete_parameter(Name=parameter_name)
+  #                     cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+  #                 except ssm.exceptions.ParameterNotFound as not_found:
+  #                     # Ignore parameter not found
+  #                     cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+  #                 except ClientError as ssm_error:
+  #                     print("ssm error %s" % str(ssm_error))
+  #                     cfnresponse.send(event, context, cfnresponse.FAILED, {"Reason": str(ssm_error)})
+  #                     raise
+  #             else:
+  #                 cfnresponse.send(event, context, cfnresponse.FAILED, {"Reason": "Unknown RequestType %s" % event['RequestType']})
+  # InvokeLambdaSSMPutParamSecure1:
+  #   Type: Custom::CustomResource
+  #   DependsOn: LambdaSSMPutParamSecureLogs
+  #   Properties:
+  #     ServiceToken: !GetAtt LambdaSSMPutParamSecure.Arn
+  #     Name: saas-boost-lab-owner-pw 
+  #     Value: !Ref DBMasterPassword
+  # InvokeLambdaSSMPutParamSecure2:
+  #   Type: Custom::CustomResource
+  #   DependsOn: LambdaSSMPutParamSecureLogs
+  #   Properties:
+  #     ServiceToken: !GetAtt LambdaSSMPutParamSecure.Arn
+  #     Name: saas-boost-lab-owner-dbname 
+  #     Value: !Ref DBName
+  # InvokeLambdaSSMPutParamSecure3:
+  #   Type: Custom::CustomResource
+  #   DependsOn: LambdaSSMPutParamSecureLogs
+  #   Properties:
+  #     ServiceToken: !GetAtt LambdaSSMPutParamSecure.Arn
+  #     Name: saas-boost-lab-owner-masteruser 
+  #     Value: !Ref DBMasterUsername
+  # InvokeLambdaSSMPutParamSecure5:
+  #   Type: Custom::CustomResource
+  #   DependsOn: LambdaSSMPutParamSecureLogs
+  #   Properties:
+  #     ServiceToken: !GetAtt LambdaSSMPutParamSecure.Arn
+  #     Name: saas-boost-lab-owner-dbhost 
+  #     Value: !GetAtt RDSInstance.Endpoint.Address        
+  # # InvokeLambdaSSMPutParamSecure2:
+  # #   Type: Custom::CustomResource
+  # #   DependsOn: LambdaSSMPutParamSecureLogs
+  # #   Properties:
+  # #     ServiceToken: !GetAtt LambdaSSMPutParamSecure.Arn
+  # #     Name: saas-boost-lab-app-pw
+  # #     Value: !Ref DBAppPassword    
+  # AppServer:
+  #   Type: AWS::EC2::Instance
+  #   Condition: HasKeyPair
+  #   DependsOn: 
+  #     - KeyPair
+  #     - AppServerSecurityGroup
+  #     - RDSInstance
+  #   Metadata:
+  #     AWS::CloudFormation::Init:
+  #       configSets:
+  #         Setup:
+  #           - Configure
+  #       Configure:
+  #         packages:
+  #           yum:
+  #             postgresql: []
+  #       commands:
+  #         yum_update:
+  #           command: yum update -y
+  #   Properties:
+  #     ImageId: !Ref AMI
+  #     InstanceType: t2.micro
+  #     KeyName: !Ref KeyPair
+  #     NetworkInterfaces:
+  #       - AssociatePublicIpAddress: true
+  #         DeviceIndex: 0
+  #         SubnetId: !Ref SubnetPrivateA
+  #         GroupSet:
+  #           - !Ref AppServerSecurityGroup
+  #     Tags:
+  #       - Key: Name
+  #         Value: saas-boost-lab-appserver          
+  #     UserData:
+  #       Fn::Base64:
+  #         !Join
+  #           - ''
+  #           - - "#!/bin/bash -xe\n"
+  #             - "amazon-linux-extras install -y postgresql14"
+  #             - "\n"
+  #             - "export DB_HOST=$(aws --region="
+  #             - !Ref AWS::Region
+  #             - " ssm get-parameter --name saas-boost-lab-owner-dbhost --with-decryption --output text --query Parameter.Value)"              
+  #             - "\n"
+  #             - "export DB_NAME=$(aws --region=" 
+  #             - !Ref AWS::Region
+  #             - " ssm get-parameter --name saas-boost-lab-owner-dbname --with-decryption --output text --query Parameter.Value)"
+  #             - "\n"
+  #             - "export DB_USER=$(aws --region="
+  #             - !Ref AWS::Region
+  #             - " ssm get-parameter --name saas-boost-lab-owner-masteruser --with-decryption --output text --query Parameter.Value)"          
+  #             - "\n"
+  #             - "export DB_PWD=$(aws --region=" 
+  #             - !Ref AWS::Region
+  #             - " ssm get-parameter --name saas-boost-lab-owner-pw --with-decryption --output text --query Parameter.Value)"              
+  #             - "\n"
+  #             - "yum update -y aws-cfn-bootstrap\n"
+  #             - "# Run the config sets from the CloudFormation metadata\n"
+  #             - "/opt/aws/bin/cfn-init -v -s "
+  #             - !Ref AWS::StackName
+  #             - " -r AppServer -c Setup --region "
+  #             - !Ref AWS::Region
+  #             - "\n\n" 
+  JumpBox:
+    Type: AWS::EC2::Instance
+    Condition: HasKeyPair
+    DependsOn: 
+      - KeyPair
+      - JumpBoxSecurityGroup
+      # - RDSInstance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          ascending:
+            - "config1"
+            - "config2"
+            - "config3"
+        config1:
+          commands:
+            yum_update:
+              command: yum update -y
+        config2:
+          commands:
+            pgsql_install:
+              command: amazon-linux-extras install -y postgresql14
+        config3:
+          files:
+            /tmp/setup.sql:
+              content: !Sub |
+                CREATE TABLE tenants (
+                  tenant_id VARCHAR(50) PRIMARY KEY,
+                  tenant_name VARCHAR(100) NOT NULL,
+                  onboarding_date DATE NOT NULL,
+                  status VARCHAR(50) NOT NULL,
+                  tier VARCHAR(50) NOT NULL
+                );
+
+                CREATE TABLE users (
+                    user_name VARCHAR(255) primary key,
+                    tenant_id VARCHAR(50),
+                    FOREIGN KEY (tenant_id) REFERENCES Tenants(tenant_id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE records (
+                  record_id SERIAL PRIMARY KEY,
+                  tenant_id VARCHAR(50) NOT NULL,
+                  user_name varchar(255) NOT NULL,
+                  clock_in TIMESTAMP WITH TIME ZONE NOT NULL,
+                  clock_out TIMESTAMP WITH TIME ZONE,
+                  CONSTRAINT unique_user_clock_in UNIQUE (tenant_id, user_name, clock_in),
+                  CONSTRAINT fk_tenant FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id),
+                  CONSTRAINT fk_user_name FOREIGN KEY (user_name) REFERENCES users (user_name)
+                );
+
+                CREATE INDEX idx_records_username_clock_in ON records (user_name, clock_in);
+                CREATE INDEX idx_records_tenant_id_username_clock_in ON records (tenant_id, user_name, clock_in);
+              mode: 000644
+              owner: root
+              group: root
+        # configSets:
+        #   Setup:
+        #     - Configure
+        # Configure:
+        #   packages:
+        #     yum:
+        #       postgresql: []
+        # commands:
+        #   yum_update:
+        #     command: yum update -y
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: t2.micro
+      KeyName: !Ref KeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId: !Ref SubnetPublicA
+          GroupSet:
+            - !Ref JumpBoxSecurityGroup
+      Tags:
+        - Key: Name
+          Value: saas-boost-lab-jumpbox          
+      UserData:
+        Fn::Base64:
+          !Join
+            - ''
+            - - "#!/bin/bash -xe\n"
+              # - "amazon-linux-extras install -y postgresql14"
+              # - "\n"
+              - "export DB_HOST="
+              # - !GetAtt RDSInstance.Endpoint.Address
+              - "\n"
+              - "export DB_NAME="
+              - !Ref DBName
+              - "\n"
+              - "export DB_USER="
+              - !Ref DBMasterUsername
+              - "\n"
+              - "export DB_PWD="
+              - !Ref DBMasterPassword
+              - "\n"
+              - "yum update -y aws-cfn-bootstrap\n"
+              - "# Run the config sets from the CloudFormation metadata\n"
+              - "/opt/aws/bin/cfn-init -v -s "
+              - !Ref AWS::StackName
+              - " -r JumpBox -c ascending --region "
+              - !Ref AWS::Region
+              - "\n\n"  
+  # NLB:
+  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  #   Properties: 
+  #     Name: saas-boost-lab-nlb
+  #     SubnetMappings: 
+  #       - SubnetId: !Ref SubnetPublicA
+  #       - SubnetId: !Ref SubnetPublicB
+  #     Tags: 
+  #       - Key: Name
+  #         Value: saas-boost-lab-nlb
+  #     Type: network
+
+  # Listener1:
+  #   Type: AWS::ElasticLoadBalancingV2::Listener
+  #   Properties:
+  #     DefaultActions:
+  #       - TargetGroupArn:
+  #           Ref: TargetGroup1
+  #         Type: forward
+  #     LoadBalancerArn:
+  #       Ref: NLB
+  #     Port: 3000
+  #     Protocol: TCP
+
+  # Listener2:
+  #   Type: AWS::ElasticLoadBalancingV2::Listener
+  #   Properties:
+  #     DefaultActions:
+  #       - TargetGroupArn:
+  #           Ref: TargetGroup2
+  #         Type: forward
+  #     LoadBalancerArn:
+  #       Ref: NLB
+  #     Port: 3001
+  #     Protocol: TCP
+
+  # TargetGroup1:
+  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  #   Properties:
+  #     Port: 3000
+  #     Protocol: TCP
+  #     Targets:
+  #       - Id:
+  #           Ref: AppServer
+  #     TargetType: instance
+  #     VpcId:
+  #       Ref: VPC
+
+  # TargetGroup2:
+  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  #   Properties:
+  #     Port: 3001
+  #     Protocol: TCP
+  #     Targets:
+  #       - Id:
+  #           Ref: AppServer
+  #     TargetType: instance
+  #     VpcId:
+  #       Ref: VPC              
+Outputs:
+  # RDSEndpoint:
+  #   Description: RDS Endpoint
+  #   Value: !GetAtt RDSInstance.Endpoint.Address
+  RDSDatabaseName:
+    Description: Database Name
+    Value: !Ref DBName
+  RDSDatabaseMasterUser:
+    Description: Master Database User
+    Value: !Ref DBMasterUsername
+  # RDSDatabaseAppUser:
+  #   Description: Application Database User
+  #   Value: !Ref DBAppUsername
+  JumpBoxDNS:
+    Condition: HasKeyPair
+    Description: Jump Box DNS
+    Value: !GetAtt JumpBox.PublicDnsName

@@ -1,0 +1,19 @@
+[
+    {
+      "ParameterKey": "KeyName",
+      "ParameterValue": "ec2-key-pair"
+    },
+    {
+      "ParameterKey": "DBName",
+      "ParameterValue": "clickio"
+    },
+    {
+      "ParameterKey": "DBMasterUsername",
+      "ParameterValue": "clickioadmin"
+    },
+    {
+      "ParameterKey": "DBMasterPassword",
+      "ParameterValue": "1q2w3e4r"
+    }
+  ]
+
