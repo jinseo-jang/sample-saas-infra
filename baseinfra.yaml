@@ -26,16 +26,6 @@ Parameters:
     Description: RDS DB Port
     Type: String
     Default: 5432
-  # DBAppUsername:
-  #   Description: RDS Application Username
-  #   Type: String
-  # DBAppPassword:
-  #   Description: RDS Application User Password
-  #   Type: String
-  #   NoEcho: true
-  #   MinLength: 8
-  #   AllowedPattern: ^[a-zA-Z0-9/@"' ]{8,}$
-  #   ConstraintDescription: RDS passwords must be at least 8 characters in length
   RDSInstanceType:
     Description: RDS Instance Type
     Type: String
@@ -57,10 +47,18 @@ Parameters:
     Description: Key name of zipped source code in the S3Bucket
     Type: String
     Default: modules/55090f1e96784170989036aa131597b0/v1/fe.zip
-  BeCodeKey:
+  BeUserCodeKey:
     Description: Key name of zipped source code in the S3Bucket
     Type: String
-    Default: modules/55090f1e96784170989036aa131597b0/v1/be.zip
+    Default: modules/55090f1e96784170989036aa131597b0/v1/be-users.zip
+  BeRecordCodeKey:
+    Description: Key name of zipped source code in the S3Bucket
+    Type: String
+    Default: modules/55090f1e96784170989036aa131597b0/v1/be-records.zip   
+  Gitbranch:
+    Description: Branch name of code repository
+    Type: String
+    Default: main  
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -335,6 +333,7 @@ Resources:
       SubnetIds:
         - !Ref SubnetPrivateA
         - !Ref SubnetPrivateB
+
   RDSInstance:
     Type: AWS::RDS::DBInstance
     DependsOn: RDSSecurityGroup
@@ -408,12 +407,17 @@ Resources:
                   - ec2:DescribeNetworkInterfaces
                   - ec2:DeleteNetworkInterface
                 Resource: '*'
+              - Effect: "Allow"
+                Action: 
+                  - "codecommit:*"
+                Resource: "*"
 
   LambdaSSMPutParamSecureLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/saas-boost-lab-ssm-secure
       RetentionInDays: 14
+
   LambdaSSMPutParamSecure:
     Type: AWS::Lambda::Function
     DependsOn: LambdaSSMPutParamSecureLogs
@@ -504,29 +508,15 @@ Resources:
       - KeyPair
       - JumpBoxSecurityGroup
       - RDSInstance
+      - BeUserCodeRepo
+      - BeRecordCodeRepo
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
           ascending:
             - "config1"
             - "config2"
-            - "config3"
-            - "config4"
-            - "config5"
-            - "config6"
         config1:
-          commands:
-            yum_update:
-              command: yum update -y
-        config2:
-          commands:
-            cfn_bootstrap:
-              command: yum update -y aws-cfn-bootstrap
-        config3:
-          commands:
-            pgsql_install:
-              command: yum install postgresql15.x86_64
-        config4:
           files:
             /tmp/bootstrap.sql:
               content: !Sub |
@@ -559,10 +549,25 @@ Resources:
                 CREATE INDEX IF NOT EXISTS idx_records_tenant_id_username_clock_in ON records (tenant_id, user_name, clock_in);
               mode: 000644
               owner: root
-              group: root
-        config5:
+              group: root                       
+        config2:
           commands:
-            pgsql_bootstrap:
+            01_yum_update:
+              command: yum update -y
+              ignoreErrors: true
+            02_cfn_bootstrap:
+              command: yum update -y aws-cfn-bootstrap
+              ignoreErrors: true
+            03_pgsql_install:
+              command: yum install -y postgresql15.x86_64
+              ignoreErrors: true
+            04_git_install:
+              command: yum install -y git
+              ignoreErrors: true
+            05_pip_install:
+              command: python3 -m ensurepip
+              ignoreErrors: true
+            06_pgsql_bootstrap:
               command: /usr/bin/psql --host=$DB_HOST --port=$DB_PORT --username=$DB_USER --dbname=$DB_NAME -f /tmp/bootstrap.sql
               env:
                 DB_HOST: !GetAtt RDSInstance.Endpoint.Address
@@ -570,10 +575,38 @@ Resources:
                 DB_NAME: !Ref DBName
                 DB_PORT: !Ref DBPort
                 PGPASSWORD: !Ref DBMasterPassword
-        config6:
-          commands:
-            debug:
-              command: "which psql;echo $PATH > /tmp/path.txt"
+              ignoreErrors: true
+            07_git_config:
+              command: git config --system credential.helper '!aws codecommit credential-helper $@'
+              ignoreErrors: true
+            08_git_config:
+              command: git config --system credential.UseHttpPath true
+              ignoreErrors: true
+            09_clone_userapp:
+              command: git clone $USER_REPO
+              env:
+                USER_REPO: !GetAtt BeUserCodeRepo.CloneUrlHttp
+              cwd: "~"
+              ignoreErrors: true
+            10_clone_recordapp:
+              command: git clone $RECORD_REPO
+              env:
+                RECORD_REPO: !GetAtt BeRecordCodeRepo.CloneUrlHttp
+              cwd: "~"
+              ignoreErrors: true
+            11_run_userserver:
+              command: chmod 755 ./runserver.sh && ./runserver.sh
+              cwd: !Sub
+                - ~/${reponame}
+                - reponame: !GetAtt BeUserCodeRepo.Name
+              ignoreErrors: true
+            12_run_recordserver:
+              command: chmod 755 ./runserver.sh && ./runserver.sh
+              cwd: !Sub
+                - ~/${reponame}
+                - reponame: !GetAtt BeRecordCodeRepo.Name
+              ignoreErrors: true      
+      
     Properties:
       ImageId: !Ref AMI
       InstanceType: t2.micro
@@ -610,20 +643,17 @@ Resources:
         configSets:
           ascending:
             - "config1"
-            - "config2"
-            - "config3"
         config1:
           commands:
-            yum_update:
+            01_yum_update:
               command: yum update -y
-        config2:
-          commands:
-            cfn_bootstrap:
+              ignoreErrors: true
+            02_cfn_bootstrap:
               command: yum update -y aws-cfn-bootstrap
-        config3:
-          commands:
-            pgsql_install:
-              command: yum install postgresql15.x86_64
+              ignoreErrors: true
+            03_pgsql_install:
+              command: yum install -y postgresql15.x86_64
+              ignoreErrors: true
     Properties:
       ImageId: !Ref AMI
       InstanceType: t2.micro
@@ -648,66 +678,6 @@ Resources:
               - " -r JumpBox -c ascending --region "
               - !Ref AWS::Region
               - "\n\n"  
-  
-  # NLB:
-  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-  #   Properties: 
-  #     Name: saas-boost-lab-nlb
-  #     SubnetMappings: 
-  #       - SubnetId: !Ref SubnetPublicA
-  #       - SubnetId: !Ref SubnetPublicB
-  #     Tags: 
-  #       - Key: Name
-  #         Value: saas-boost-lab-nlb
-  #     Type: network
-  
-  # Listener1:
-  #   Type: AWS::ElasticLoadBalancingV2::Listener
-  #   Properties:
-  #     DefaultActions:
-  #       - TargetGroupArn:
-  #           Ref: TargetGroup1
-  #         Type: forward
-  #     LoadBalancerArn:
-  #       Ref: NLB
-  #     Port: 80
-  #     Protocol: TCP
-  
-  # Listener2:
-  #   Type: AWS::ElasticLoadBalancingV2::Listener
-  #   Properties:
-  #     DefaultActions:
-  #       - TargetGroupArn:
-  #           Ref: TargetGroup2
-  #         Type: forward
-  #     LoadBalancerArn:
-  #       Ref: NLB
-  #     Port: 80
-  #     Protocol: TCP
-  
-  # TargetGroup1:
-  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
-  #   Properties:
-  #     Port: 5000
-  #     Protocol: TCP
-  #     Targets:
-  #       - Id:
-  #           Ref: AppServer
-  #     TargetType: instance
-  #     VpcId:
-  #       Ref: VPC
-  
-  # TargetGroup2:
-  #   Type: AWS::ElasticLoadBalancingV2::TargetGroup
-  #   Properties:
-  #     Port: 5001
-  #     Protocol: TCP
-  #     Targets:
-  #       - Id:
-  #           Ref: AppServer
-  #     TargetType: instance
-  #     VpcId:
-  #       Ref: VPC
 #ALB
   ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -848,6 +818,7 @@ Resources:
         Value: tenant
       VerificationMessageTemplate:
         DefaultEmailOption: CONFIRM_WITH_CODE
+
   UserPoolAppClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -867,11 +838,37 @@ Resources:
         IdToken: minutes
         RefreshToken: days
       UserPoolId: !Ref UserPool
+  BeUserCodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        BranchName: !Ref Gitbranch
+        S3:
+          Bucket: !Ref CodeBucket
+          Key: !Ref BeUserCodeKey
+      RepositoryDescription: Sample SaaS User service repository
+      RepositoryName: sample-saas-backend-users
+      Tags: 
+        - Key: Name
+          Value: saas-boost-lab-be-user-repository
+  BeRecordCodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        BranchName: !Ref Gitbranch
+        S3:
+          Bucket: !Ref CodeBucket
+          Key: !Ref BeRecordCodeKey
+      RepositoryDescription: Sample SaaS Record service repository
+      RepositoryName: sample-saas-backend-records
+      Tags: 
+        - Key: Name
+          Value: saas-boost-lab-be-record-repository      
   FeCodeRepo:
     Type: AWS::CodeCommit::Repository
     Properties:
       Code:
-        BranchName: mainline
+        BranchName: !Ref Gitbranch
         S3:
           Bucket: !Ref CodeBucket
           Key: !Ref FeCodeKey
@@ -885,7 +882,7 @@ Resources:
   AmplifyServiceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: saas-boost-lab-amplify-role
+      RoleName: saas-boost-lab-amplify-role-test
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -899,14 +896,18 @@ Resources:
         - arn:aws:iam::aws:policy/AdministratorAccess-Amplify
   FeHosting:
     Type: AWS::Amplify::App
-    DependsOn: 
-      - FeCodeRepo
-      - UserPool
-      - UserPoolAppClient
+    # DependsOn: 
+    #   - FeCodeRepo
     Properties: 
       # AccessToken: String
-      # AutoBranchCreationConfig: 
-      #   AutoBranchCreationConfig
+      AutoBranchCreationConfig: 
+        EnableAutoBranchCreation: true
+        # BranchName: mainline
+        EnableAutoBuild: true
+        EnablePerformanceMode: false
+        EnablePullRequestPreview: false
+        Framework: React
+        Stage: PRODUCTION
       # BasicAuthConfig: 
       #   BasicAuthConfig
       # BuildSpec: String
@@ -914,11 +915,10 @@ Resources:
       # CustomRules: 
       #   - CustomRule
       Description: Sample SaaS Front End Application Hosting
-      EnableBranchAutoDeletion: true
       IAMServiceRole: !GetAtt AmplifyServiceRole.Arn
-      Name: sample saas front-end application
+      Name: Sample SaaS Applicaiton
       # OauthToken: String
-      # Platform: WEB
+      Platform: WEB
       Repository: !GetAtt FeCodeRepo.CloneUrlHttp
       BuildSpec: |
         version: 1
@@ -937,7 +937,6 @@ Resources:
           cache:
             paths:
               - node_modules/**/*
-
       EnvironmentVariables: 
         - Name: REACT_APP_REGION
           Value: !Ref AWS::Region
@@ -956,12 +955,111 @@ Resources:
       Tags: 
         - Key: Name
           Value: saas-boost-lab-frontend-hosting
+
   FeHostingBranch:
     Type: AWS::Amplify::Branch
     Properties:
-      BranchName: mainline
       AppId: !GetAtt FeHosting.AppId
+      BranchName: main
       EnableAutoBuild: true
+      EnablePerformanceMode: true
+      EnablePullRequestPreview: true
+      Framework: React
+      Stage: PRODUCTION
+
+  CodeCommitLambdaLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/saas-boost-lab-codecommit
+      RetentionInDays: 14
+
+  CodeCommitFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - CodeCommitLambdaLogs
+      - FeCodeRepo
+      - FeHosting
+      - FeHostingBranch
+    Properties:
+      FunctionName: !Sub saas-boost-lab-codecommit
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import base64
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              responseData = {}
+              status = cfnresponse.SUCCESS
+              try:
+                  print("Received event: " + json.dumps(event, default=str))
+                  codecommit = boto3.client('codecommit')
+                  
+                  # Fetch the name of your CodeCommit repository and branch from the environment variables
+                  repository_name = event['ResourceProperties']['RepositoryName']
+                  branch_name = event['ResourceProperties']['BranchName']
+
+                  # Check if this is a Delete event
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      # Delete the branch
+                      # codecommit.delete_branch(
+                      #     repositoryName=repository_name,
+                      #     branchName=branch_name
+                      # )
+                      # print(f"Deleted branch: {branch_name}")
+                  else:    
+                      # Fetch the current commit ID of the branch
+                      response = codecommit.get_branch(
+                          repositoryName=repository_name,
+                          branchName=branch_name
+                      )
+                      commitId = response['branch']['commitId']
+                      print(f"Current commit ID: {commitId}")
+                      
+                      # Create a new file named 'dummy.txt' with the content 'dummy content'
+                      parentCommitId = commitId
+                      fileContent = 'Start Amplify Build and Deploy'
+                      filePath = 'amplify-build-start.txt'
+                      fileMode = 'NORMAL'
+                      
+                      response = codecommit.create_commit(
+                          repositoryName=repository_name,
+                          branchName=branch_name,
+                          parentCommitId=parentCommitId,
+                          putFiles=[
+                              {
+                                  'filePath': filePath,
+                                  'fileContent': fileContent,
+                                  'fileMode': fileMode
+                              },
+                          ]
+                      )
+                      newCommitId = response['commitId']
+                      print(f"New commit ID: {newCommitId}")
+                      
+                      responseData['CommitId'] = newCommitId
+                  cfnresponse.send(event, context, status, responseData, {})
+              except Exception as e:
+                  status = cfnresponse.FAILED
+                  responseData['Error'] = str(e)
+                  cfnresponse.send(event, context, status, responseData, {})
+              finally:
+                  cfnresponse.send(event, context, status, responseData, {})
+
+  CodeCommitCustomResource:
+    Type: Custom::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CodeCommitFunction.Arn
+      RepositoryName: !GetAtt FeCodeRepo.Name
+      BranchName: main
+
 Outputs:
   RDSEndpoint:
     Description: RDS Endpoint
@@ -972,9 +1070,6 @@ Outputs:
   RDSDatabaseMasterUser:
     Description: Master Database User
     Value: !Ref DBMasterUsername
-  # RDSDatabaseAppUser:
-  #   Description: Application Database User
-  #   Value: !Ref DBAppUsername
   JumpBoxDNS:
     Condition: HasKeyPair
     Description: Jump Box DNS
@@ -985,12 +1080,23 @@ Outputs:
   UserPoolAppClientID:
     Description: Created User Pool App Client Id 
     Value: !Ref UserPoolAppClient
-  SampleFeRepositoryID:
-    Description: ID of the created CodeCommit repo
+  FeRepositoryID:
+    Description: Front end CodeCommit repo
     Value: !GetAtt FeCodeRepo.CloneUrlHttp
   FrontEndHostingDomain:
     Description: Domain for front end application hosted by Amplify
-    Value: !GetAtt FeHosting.DefaultDomain
+    Value: 
+      !Join 
+        - "" 
+        - - !Ref Gitbranch
+          - "."
+          - !GetAtt FeHosting.DefaultDomain
+  BeUserRepositoryID:
+    Description: User service CodeCommit repo
+    Value: !GetAtt BeUserCodeRepo.CloneUrlHttp
+  BeRecordRepositoryID:
+    Description: Record service CodeCommit repo
+    Value: !GetAtt BeRecordCodeRepo.CloneUrlHttp
   BackEndEndPoint:
     Description: Domain for back end application fronted by ALB
     Value: !GetAtt ALB.DNSName

@@ -90,21 +90,21 @@ Resources:
           cache:
             paths:
               - node_modules/**/*
-      # EnvironmentVariables: 
-      #   - Name: REACT_APP_REGION
-      #     Value: !Ref AWS::Region
-      #   - Name: REACT_APP_USER_POOL_ID
-      #     Value: !Ref UserPool
-      #   - Name: REACT_APP_APP_CLIENT_ID
-      #     Value: !Ref UserPoolAppClient
-      #   - Name: REACT_APP_USERS_BASEURL
-      #     Value: !GetAtt ALB.DNSName
-      #   - Name: REACT_APP_RECORDS_BASEURL
-      #     Value: !GetAtt ALB.DNSName
-      #   - Name: REACT_APP_USERS_API_URL
-      #     Value: /api/users
-      #   - Name: REACT_APP_RECORDS_API_URL
-      #     Value: /api/records      
+      EnvironmentVariables: 
+        - Name: REACT_APP_REGION
+          Value: !Ref AWS::Region
+        - Name: REACT_APP_USER_POOL_ID
+          Value: !Ref UserPool
+        - Name: REACT_APP_APP_CLIENT_ID
+          Value: !Ref UserPoolAppClient
+        - Name: REACT_APP_USERS_BASEURL
+          Value: !GetAtt ALB.DNSName
+        - Name: REACT_APP_RECORDS_BASEURL
+          Value: !GetAtt ALB.DNSName
+        - Name: REACT_APP_USERS_API_URL
+          Value: /api/users
+        - Name: REACT_APP_RECORDS_API_URL
+          Value: /api/records      
       Tags: 
         - Key: Name
           Value: saas-boost-lab-frontend-hosting
@@ -199,7 +199,7 @@ Resources:
       LogGroupName: !Sub /aws/lambda/saas-boost-lab-codecommit
       RetentionInDays: 14
   
-  CodeCommitDummyCommitFunction:
+  CodeCommitFunction:
     Type: AWS::Lambda::Function
     DependsOn:
       - CodeCommitLambdaLogs
@@ -282,7 +282,7 @@ Resources:
   CodeCommitCustomResource:
     Type: Custom::CustomResource
     Properties:
-      ServiceToken: !GetAtt CodeCommitDummyCommitFunction.Arn
+      ServiceToken: !GetAtt CodeCommitFunction.Arn
       RepositoryName: !GetAtt FeCodeRepo.Name
       BranchName: main
 
